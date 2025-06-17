@@ -4,8 +4,9 @@ use std::{
     io::{prelude::*, BufReader},
     net::{TcpListener, TcpStream},
     path::Path,
-    time::{SystemTime, UNIX_EPOCH},
 };
+
+use chrono::Local;
 
 fn main() {
     let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
@@ -23,14 +24,9 @@ fn main() {
     }
 }
 
-fn get_timestamp() -> String {
-    let start = SystemTime::now();
-    let since_the_epoch = start
-        .duration_since(UNIX_EPOCH)
-        .expect("Time went backwards");
-    let in_ms =
-        since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_nanos() as u64 / 1_000_000;
-    format!("{}", in_ms)
+fn get_formated_datetime() -> String {
+    let now = Local::now();
+    now.format("%Y.%m.%d %H:%M").to_string()
 }
 
 fn parse_form_data(body: &str) -> HashMap<String, String> {
@@ -54,7 +50,7 @@ fn handle_post_request(mut stream: TcpStream, headers: HashMap<String, String>, 
     let email = form_data.get("email").map_or("", |s| s.as_str());
     let phone = form_data.get("phone").map_or("", |s| s.as_str());
     let comments = form_data.get("comments").map_or("", |s| s.as_str());
-    let timestamp = get_timestamp();
+    let timestamp = get_formated_datetime();
 
     let csv_file_path = "demo_requests.csv";
     let file_exists = Path::new(csv_file_path).exists();
@@ -182,9 +178,6 @@ fn handle_connection(mut stream: TcpStream) {
                 serve_binary_content = true;
             } else if requested_relative_path.ends_with(".ico") {
                 content_type_to_send = "image/x-icon";
-                serve_binary_content = true;
-            } else if requested_relative_path.ends_with(".heic") {
-                content_type_to_send = "image/heic";
                 serve_binary_content = true;
             } else {
                 content_type_to_send = "application/octet-stream";
