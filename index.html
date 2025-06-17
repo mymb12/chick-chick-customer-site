@@ -304,5 +304,125 @@
         </div>
       </div>
     </footer>
+
+    <div id="demoModal" class="modal">
+      <div class="modal-content">
+        <span class="close-button">×</span>
+        <h2>Заказать демонстрацию Januya</h2>
+        <p>
+          Оставьте свои контактные данные, и мы свяжемся с вами в ближайшее
+          время, чтобы обсудить, как Januya может помочь вашему хозяйству.
+        </p>
+
+        <form id="demoForm">
+          <div class="form-group">
+            <label for="modalName">Ваше имя:</label>
+            <input type="text" id="modalName" name="name" required />
+          </div>
+          <div class="form-group">
+            <label for="modalEmail">Email:</label>
+            <input type="email" id="modalEmail" name="email" required />
+          </div>
+          <div class="form-group">
+            <label for="modalPhone">Телефон (необязательно):</label>
+            <input type="tel" id="modalPhone" name="phone" />
+          </div>
+          <div class="form-group">
+            <label for="modalComments">Дополнительные комментарии:</label>
+            <textarea id="modalComments" name="comments" rows="3"></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary modal-submit-btn">
+            Отправить заявку
+          </button>
+        </form>
+        <p class="modal-note">
+          Мы уважаем вашу конфиденциальность. Ваши данные не будут переданы
+          третьим лицам.
+        </p>
+      </div>
+    </div>
+
+    <script>
+      const modal = document.getElementById("demoModal");
+      const openModalButtons = document.querySelectorAll(
+        "header .btn-secondary, #cta-final .btn-primary",
+      );
+      const closeButton = document.querySelector(".modal .close-button");
+      const demoForm = document.getElementById("demoForm");
+
+      openModalButtons.forEach((btn) => {
+        if (
+          btn.textContent.includes("Заказать демо") ||
+          btn.textContent.includes("Запросить демо сейчас")
+        ) {
+          btn.onclick = function (event) {
+            event.preventDefault();
+            modal.classList.add("active");
+          };
+        }
+      });
+
+      if (closeButton) {
+        closeButton.onclick = function () {
+          modal.classList.remove("active");
+        };
+      }
+
+      window.onclick = function (event) {
+        if (event.target == modal) {
+          modal.classList.remove("active");
+        }
+      };
+
+      if (demoForm) {
+        demoForm.onsubmit = async function (event) {
+          event.preventDefault();
+          const submitButton = demoForm.querySelector('button[type="submit"]');
+          const originalButtonText = submitButton.textContent;
+          submitButton.disabled = true;
+          submitButton.textContent = "Отправка...";
+
+          const formData = new FormData(demoForm);
+
+          try {
+            const response = await fetch("/submit-demo-request", {
+              method: "POST",
+              body: new URLSearchParams(formData),
+            });
+
+            if (response.ok) {
+              const result = await response.text();
+              console.log("Success:", result);
+              alert("Спасибо за вашу заявку! Мы скоро свяжемся с вами.");
+              modal.classList.remove("active");
+              demoForm.reset();
+            } else {
+              console.error(
+                "Form submission error:",
+                response.status,
+                response.statusText,
+              );
+              alert(
+                "Произошла ошибка при отправке заявки. Пожалуйста, попробуйте еще раз.",
+              );
+            }
+          } catch (error) {
+            console.error("Network error:", error);
+            alert(
+              "Сетевая ошибка. Пожалуйста, проверьте ваше подключение и попробуйте еще раз.",
+            );
+          } finally {
+            submitButton.disabled = false;
+            submitButton.textContent = originalButtonText;
+          }
+        };
+      }
+
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape" && modal.classList.contains("active")) {
+          modal.classList.remove("active");
+        }
+      });
+    </script>
   </body>
 </html>

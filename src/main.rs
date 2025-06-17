@@ -1,8 +1,10 @@
 use std::{
-    fs,
+    collections::HashMap,
+    fs::{self, OpenOptions},
     io::{prelude::*, BufReader},
     net::{TcpListener, TcpStream},
     path::Path,
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 fn main() {
@@ -21,46 +23,149 @@ fn main() {
     }
 }
 
-fn handle_connection(mut stream: TcpStream) {
-    let buf_reader = BufReader::new(&stream);
-    let request_line_result = buf_reader.lines().next();
+fn get_timestamp() -> String {
+    let start = SystemTime::now();
+    let since_the_epoch = start
+        .duration_since(UNIX_EPOCH)
+        .expect("Time went backwards");
+    let in_ms =
+        since_the_epoch.as_secs() * 1000 + since_the_epoch.subsec_nanos() as u64 / 1_000_000;
+    format!("{}", in_ms)
+}
 
-    if request_line_result.is_none() {
-        eprintln!("Received an empty request.");
-        // Optionally send a 400 Bad Request response
+fn parse_form_data(body: &str) -> HashMap<String, String> {
+    let mut data = HashMap::new();
+    for pair in body.split('&') {
+        if let Some((key, value)) = pair.split_once('=') {
+            let decoded_value = urlencoding::decode(value)
+                .unwrap_or_else(|_| value.into())
+                .to_string();
+            data.insert(key.to_string(), decoded_value);
+        }
+    }
+    data
+}
+
+fn handle_post_request(mut stream: TcpStream, headers: HashMap<String, String>, body: String) {
+    println!("Handling POST request for /submit-demo-request");
+    let form_data = parse_form_data(&body);
+
+    let name = form_data.get("name").map_or("", |s| s.as_str());
+    let email = form_data.get("email").map_or("", |s| s.as_str());
+    let phone = form_data.get("phone").map_or("", |s| s.as_str());
+    let comments = form_data.get("comments").map_or("", |s| s.as_str());
+    let timestamp = get_timestamp();
+
+    let csv_file_path = "demo_requests.csv";
+    let file_exists = Path::new(csv_file_path).exists();
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(true)
+        .open(csv_file_path)
+        .unwrap();
+
+    if !file_exists {
+        if let Err(e) = writeln!(file, "Timestamp,Name,Email,Phone,Comments") {
+            eprintln!("Couldn't write header to CSV: {}", e);
+        }
+    }
+
+    let record = format!(
+        "\"{}\",\"{}\",\"{}\",\"{}\",\"{}\"",
+        timestamp.replace('"', "\"\""),
+        name.replace('"', "\"\""),
+        email.replace('"', "\"\""),
+        phone.replace('"', "\"\""),
+        comments.replace('"', "\"\"")
+    );
+
+    if let Err(e) = writeln!(file, "{}", record) {
+        eprintln!("Couldn't write to CSV: {}", e);
+        let response =
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        stream.write_all(response.as_bytes()).unwrap();
         return;
     }
-    let request_line = match request_line_result.unwrap() {
-        Ok(line) => line,
-        Err(e) => {
-            eprintln!("Error reading request line: {}", e);
-            // Optionally send a 400 Bad Request response
-            return;
+
+    println!("Successfully wrote to CSV: {}", record);
+    let response_body = "Form submitted successfully!";
+    let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\n{}",
+        response_body.len(),
+        response_body
+    );
+    stream.write_all(response.as_bytes()).unwrap();
+}
+
+fn handle_connection(mut stream: TcpStream) {
+    let mut buf_reader = BufReader::new(&mut stream);
+
+    let mut request_line = String::new();
+    if buf_reader.read_line(&mut request_line).is_err() || request_line.is_empty() {
+        eprintln!("Failed to read request line or request was empty.");
+        return;
+    }
+
+    let request_parts: Vec<&str> = request_line.trim().split_whitespace().collect();
+    if request_parts.len() < 2 {
+        eprintln!("Malformed request line: {}", request_line);
+        return;
+    }
+    let method = request_parts[0];
+    let path_from_request = request_parts[1];
+
+    println!("Request: {}", request_line.trim());
+
+    let mut headers = HashMap::new();
+    let mut content_length = 0;
+    loop {
+        let mut header_line = String::new();
+        if buf_reader.read_line(&mut header_line).is_err() || header_line.trim().is_empty() {
+            break;
         }
-    };
+        if let Some((name, value)) = header_line.trim().split_once(": ") {
+            headers.insert(name.to_lowercase().to_string(), value.to_string());
+            if name.to_lowercase() == "content-length" {
+                content_length = value.parse::<usize>().unwrap_or(0);
+            }
+        }
+    }
 
-    println!("Request: {}", request_line);
-
-    let path_from_request = request_line.split_whitespace().nth(1).unwrap_or("/");
+    if method == "POST" && path_from_request == "/submit-demo-request" {
+        let mut body_bytes = vec![0; content_length];
+        if content_length > 0 {
+            if buf_reader.read_exact(&mut body_bytes).is_err() {
+                eprintln!("Failed to read request body fully.");
+                let response = "HTTP/1.1 400 Bad Request\r\nContent-Length: 19\r\nConnection: close\r\n\r\nError reading body";
+                stream
+                    .write_all(response.as_bytes())
+                    .unwrap_or_else(|e| eprintln!("Error sending 400 response: {}", e));
+                return;
+            }
+        }
+        let body_string = String::from_utf8_lossy(&body_bytes).to_string();
+        handle_post_request(stream, headers, body_string);
+        return;
+    }
 
     let mut status_line_to_send: &str;
-    let mut file_path_to_serve: String; // Changed to file_path_to_serve for clarity
+    let mut file_path_to_serve: String;
     let mut content_type_to_send: &str;
-    let mut serve_binary_content = false; // Flag for binary files like images
+    let mut serve_binary_content = false;
 
     if path_from_request == "/" {
         status_line_to_send = "HTTP/1.1 200 OK";
         file_path_to_serve = "index.html".to_string();
-        content_type_to_send = "text/html; charset=utf-8"; // Added charset for HTML
+        content_type_to_send = "text/html; charset=utf-8";
     } else {
-        // Remove leading '/' to make it a relative path
         let requested_relative_path = path_from_request.trim_start_matches('/').to_string();
 
         if Path::new(&requested_relative_path).exists() {
             status_line_to_send = "HTTP/1.1 200 OK";
-            file_path_to_serve = requested_relative_path.clone(); // Use the relative path
+            file_path_to_serve = requested_relative_path.clone();
 
-            // Determine content type based on extension
             if requested_relative_path.ends_with(".css") {
                 content_type_to_send = "text/css; charset=utf-8";
             } else if requested_relative_path.ends_with(".html") {
@@ -79,14 +184,11 @@ fn handle_connection(mut stream: TcpStream) {
                 content_type_to_send = "image/x-icon";
                 serve_binary_content = true;
             } else if requested_relative_path.ends_with(".heic") {
-                // Basic HEIC attempt
                 content_type_to_send = "image/heic";
                 serve_binary_content = true;
-            }
-            // Add more image/binary types here as needed (gif, svg, webp, etc.)
-            else {
-                content_type_to_send = "application/octet-stream"; // Generic binary type
-                serve_binary_content = true; // Assume unknown types might be binary
+            } else {
+                content_type_to_send = "application/octet-stream";
+                serve_binary_content = true;
             }
         } else {
             println!(
@@ -96,7 +198,7 @@ fn handle_connection(mut stream: TcpStream) {
             status_line_to_send = "HTTP/1.1 404 NOT FOUND";
             file_path_to_serve = "404.html".to_string();
             content_type_to_send = "text/html; charset=utf-8";
-            serve_binary_content = false; // 404 page is text
+            serve_binary_content = false;
         }
     }
 
@@ -122,7 +224,6 @@ fn handle_connection(mut stream: TcpStream) {
                     "Error reading binary file '{}': {}. Sending 404.",
                     file_path_to_serve, e_read
                 );
-                // Simplified 404 for binary read failure
                 let status_404 = "HTTP/1.1 404 NOT FOUND";
                 let body_404 = "404 Not Found";
                 let response_404 = format!(
@@ -135,7 +236,6 @@ fn handle_connection(mut stream: TcpStream) {
             }
         }
     } else {
-        // Serve text-based content (HTML, CSS, JS, or fallback 404.html)
         let response_contents_string = match fs::read_to_string(&file_path_to_serve) {
             Ok(contents) => {
                 println!("Successfully read text file '{}'.", file_path_to_serve);
@@ -147,8 +247,7 @@ fn handle_connection(mut stream: TcpStream) {
                     file_path_to_serve, e_read
                 );
                 if file_path_to_serve != "404.html" {
-                    // If intended file failed, try 404.html
-                    status_line_to_send = "HTTP/1.1 404 NOT FOUND"; // Ensure 404 status
+                    status_line_to_send = "HTTP/1.1 404 NOT FOUND";
                     content_type_to_send = "text/html; charset=utf-8";
                     match fs::read_to_string("404.html") {
                         Ok(c404) => {
@@ -164,7 +263,6 @@ fn handle_connection(mut stream: TcpStream) {
                         }
                     }
                 } else {
-                    // 404.html itself failed to read
                     eprintln!("'404.html' (targeted as error page) failed to read. Sending hardcoded 404.");
                     "<html><head><title>404 Not Found</title></head><body><h1>404 Not Found</h1><p>The 404.html error page is missing or unreadable.</p></body></html>".to_string()
                 }
