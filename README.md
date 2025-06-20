@@ -73,20 +73,6 @@ To get a local copy up and running, follow these simple steps.
 
 4.  **(Optional) Second Local Site for "Смотреть демо" Button:**
     The "Смотреть демо" button is configured to link to `http://127.0.0.1:6564`. If you have another local project running on that port, it will open in a new tab (additionally requires another repo cloned: https://github.com/mymb12/chikc-chick).
-
-### Project Structure
-januya-project/
-├── Cargo.toml 
-├── src/
-│ └── main.rs 
-├── index.html
-├── style.css 
-├── image/
-│ └── IMG_0065.jpg
-├── demo_requests.csv 
-├── 404.html 
-└── README.md 
-
 ---
 
 ## 🛣️ Potential Future Enhancements
